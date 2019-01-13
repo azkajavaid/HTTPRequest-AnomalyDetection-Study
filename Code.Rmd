@@ -1,0 +1,98 @@
+---
+title: "MachineLearningAnomalyDetection"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(mosaic)
+require(gdata)
+require(rpart)
+library(partykit)
+library(ROCR)
+library(rpart.plot)
+library(dplyr)
+library(data.table)
+library(MASS)
+library(neuralnet)
+```
+
+```{r}
+cyber<- read.csv("CSICData.csv")
+cyberData <- load("cyber.Rda")
+```
+
+##Data Characteristics
+```{r}
+names(cyber) #list of variables 
+nrow(cyber) #total count 
+nrow(filter(cyber, label == "anom")) #anomalous requests
+nrow(filter(cyber, label == "norm")) #normal requests 
+head(cyber) #glimpse of the dataset 
+```
+
+##Feature Selection 
+```{r}
+cyber$charPayload <- as.character(cyber$payload)
+cyber$countPayload <- nchar(cyber$charPayload) #total characters in payload 
+cyber$countPayload <- as.numeric(cyber$countPayload)
+
+cyber$contentLength <- as.numeric(cyber$contentLength)
+cyber$methodChar <- ifelse(cyber$method == "GET", 0, ifelse(cyber$method == "POST", 1, 2))
+cyber$label <- as.factor(cyber$label)
+
+cyber <- as.data.table(cyber)[, countJSession := length(unique(cookie)), by = url][] #number of unique cookie ids by url 
+cyber <- as.data.table(cyber)[, countIndex := length(unique(index)), by = url][] #number of unique index ids by url 
+
+#Selecting the specified features in cyber1 dataframe 
+cyber1 <- cyber %>% dplyr::select(countPayload, countJSession, countIndex, contentLength, methodChar, label)
+```
+
+```{r}
+cyber2 <- load("cyber1.Rda")
+```
+
+##Partitioning data in Training (build model) and Test set (test model) 
+```{r}
+n <- nrow(cyber1)
+shuffled <- cyber1[sample(n),]
+train <- shuffled[1:round(0.7 * n),] #70 percent training and 30% test data 
+test <- shuffled[(round(0.7 * n) + 1):n,]
+```
+
+##Supervised Learning: Decision Tree
+```{r}
+#Building model 
+tree <- rpart(label ~ ., data = train, method = "class") #use all the variables to predict the label 
+
+#Plotting decision tree 
+plot(as.party(tree))
+```
+
+
+##Assessing Decion Trees
+```{r}
+#Assessing accuracy on test set 
+pred <- predict(tree, test, type = "class")
+conf <- table(test$label, pred) #building confusion matrix 
+print(sum(diag(conf)) / sum(conf)) #63% model accuracy 
+```
+
+##Supervised Learning: Neural Networks 
+```{r}
+cyber1$label <- as.numeric(cyber1$label)
+nn <- neuralnet(
+  label~countPayload+contentLength+countJSession+countIndex + methodChar,
+  data=cyber1, hidden=3, linear.output=FALSE)
+
+plot(nn)
+```
+
+##Assessing Neural Networks 
+```{r}
+nn$result.matrix #shows weights associated with hidden layers for each variable 
+nn1 <- ifelse(nn$net.result[[1]]>0.5,2,1) #assign labels based on probabilities 
+misClassificationError = mean(cyber1$label != nn1)
+misClassificationError #53% error 
+```
+
